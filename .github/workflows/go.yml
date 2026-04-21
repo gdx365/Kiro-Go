@@ -1,0 +1,109 @@
+name: Go Build
+
+on:
+  push:
+    branches: [ "main" ]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Verify dependencies
+        run: go mod tidy && git diff --exit-code
+
+      - name: Run tests
+        run: go test -v ./...
+
+  build:
+    name: Build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            artifact_name: kiro-api-proxy-linux-amd64
+          - goos: linux
+            goarch: arm64
+            artifact_name: kiro-api-proxy-linux-arm64
+          - goos: windows
+            goarch: amd64
+            artifact_name: kiro-api-proxy-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            artifact_name: kiro-api-proxy-windows-arm64.exe
+          - goos: darwin
+            goarch: amd64
+            artifact_name: kiro-api-proxy-darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            artifact_name: kiro-api-proxy-darwin-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - name: Build binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o dist/${{ matrix.artifact_name }} .
+
+      - name: Package files
+        run: |
+          mkdir -p release/${{ matrix.goos }}-${{ matrix.goarch }}
+          cp dist/${{ matrix.artifact_name }} release/${{ matrix.goos }}-${{ matrix.goarch }}/
+          cp README.md release/${{ matrix.goos }}-${{ matrix.goarch }}/
+          cp README_CN.md release/${{ matrix.goos }}-${{ matrix.goarch }}/
+          cp version.json release/${{ matrix.goos }}-${{ matrix.goarch }}/
+          cp -r web release/${{ matrix.goos }}-${{ matrix.goarch }}/web
+
+      - name: Create archive (tar.gz)
+        if: matrix.goos != 'windows'
+        run: |
+          cd release
+          tar -czf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Create archive (zip)
+        if: matrix.goos == 'windows'
+        run: |
+          cd release
+          zip -r ${{ matrix.artifact_name }}.zip ${{ matrix.goos }}-${{ matrix.goarch }}
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            release/${{ matrix.artifact_name }}.tar.gz
+            release/${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
